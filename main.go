@@ -38,7 +38,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerReadinessEndpoint)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerPostChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	s := &http.Server{
 		Addr:    ":8080",
@@ -65,6 +65,14 @@ type User struct {
 	Created_At time.Time `json:"created_at"`
 	Updated_At time.Time `json:"updated_at"`
 	Email      string    `json:"email"`
+}
+
+type Chirp struct {
+	ID         uuid.UUID `json:"id"`
+	Created_At time.Time `json:"created_at"`
+	Updated_At time.Time `json:"updated_at"`
+	Body       string    `json:"body"`
+	User_ID    uuid.UUID `json:"user_id"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -98,9 +106,10 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+func (apiCfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body string `json:"body"`
+		Body string    `json:"body"`
+		User uuid.UUID `json:"user_id"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
@@ -114,11 +123,21 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
-	type response struct {
-		CleanedBody string `json:"cleaned_body"`
+
+	chirp := database.CreateChirpParams{
+		Body:   cleanChirp(params.Body),
+		UserID: params.User,
 	}
 
-	respondWithJSON(w, 200, response{CleanedBody: cleanChirp(params.Body)})
+	createdChirp, err := apiCfg.db.CreateChirp(r.Context(), chirp)
+
+	respondWithJSON(w, 201, Chirp{
+		ID:         createdChirp.ID,
+		Created_At: createdChirp.CreatedAt,
+		Updated_At: createdChirp.UpdatedAt,
+		Body:       createdChirp.Body,
+		User_ID:    createdChirp.UserID,
+	})
 
 }
 
