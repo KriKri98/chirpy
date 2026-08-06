@@ -40,6 +40,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerPostChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 	s := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -212,4 +213,24 @@ func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Reques
 
 	respondWithJSON(w, 201, resp)
 
+}
+
+func (apiCfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := apiCfg.db.GetAllChrips(r.Context())
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+	}
+
+	allChirps := []Chirp{}
+	for _, chirp := range chirps {
+		allChirps = append(allChirps, Chirp{
+			ID:         chirp.ID,
+			Created_At: chirp.CreatedAt,
+			Updated_At: chirp.UpdatedAt,
+			Body:       chirp.Body,
+			User_ID:    chirp.UserID,
+		})
+	}
+
+	respondWithJSON(w, 200, allChirps)
 }
