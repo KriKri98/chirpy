@@ -41,6 +41,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerPostChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
 	s := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -233,4 +234,27 @@ func (apiCfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Requ
 	}
 
 	respondWithJSON(w, 200, allChirps)
+}
+
+func (apiCfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
+	chirpUUID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+	chirp, err := apiCfg.db.GetChrip(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, 404, err.Error())
+		return
+	}
+
+	responseChirp := Chirp{
+		ID:         chirp.ID,
+		Created_At: chirp.CreatedAt,
+		Updated_At: chirp.UpdatedAt,
+		Body:       chirp.Body,
+		User_ID:    chirp.UserID,
+	}
+
+	respondWithJSON(w, 200, responseChirp)
 }
