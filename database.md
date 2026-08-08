@@ -8,7 +8,7 @@
 8. Create files in sql/schema
 9. Write Migrations in sql/schema, e.g. 001_users.sql (Comments -- +goose Up/Down)
 10. Get connection string: postgres://postgres:postgres@localhost:5432/DATABASE
-11. Test connection string: psql "postgres://wagslane:@localhost:5432/DATABASE"
+11. Test connection string: psql "postgres://postgres:postgres@localhost:5432/DATABASE"
 12. Migrate: goose postgres "postgres://wagslane:@localhost:5432/DATABASE" up
 13. Install SQLC
 14. Create sqlc.yaml in the root of the project:

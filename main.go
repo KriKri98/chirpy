@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/KriKri98/chirpy/internal/auth"
 	"github.com/KriKri98/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -42,6 +43,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
 	s := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -189,7 +191,8 @@ func cleanChirp(msg string) string {
 
 func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
@@ -199,7 +202,17 @@ func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	user, err := apiCfg.db.CreateUser(r.Context(), params.Email)
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+	}
+
+	userParams := database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	}
+
+	user, err := apiCfg.db.CreateUser(r.Context(), userParams)
 	if err != nil {
 		respondWithError(w, 500, err.Error())
 		return
@@ -257,4 +270,40 @@ func (apiCfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, 200, responseChirp)
+}
+
+func (apiCfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	user, err := apiCfg.db.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+
+	login, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil || login == false {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+
+	returnUser := User{
+		ID:         user.ID,
+		Created_At: user.CreatedAt,
+		Updated_At: user.UpdatedAt,
+		Email:      user.Email,
+	}
+
+	respondWithJSON(w, 200, returnUser)
+
 }
