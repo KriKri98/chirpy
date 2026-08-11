@@ -22,6 +22,7 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	jwtSecret := os.Getenv("JWT_SECRET")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Print(err)
@@ -33,13 +34,14 @@ func main() {
 		fileserverHits: atomic.Int32{},
 		db:             dbQueries,
 		platform:       platform,
+		jwtSecret:      jwtSecret,
 	}
 	apiCfg.fileserverHits.Store(0)
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	mux.HandleFunc("GET /api/healthz", handlerReadinessEndpoint)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-	mux.HandleFunc("POST /api/chirps", apiCfg.handlerPostChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerPostChirps)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
@@ -62,6 +64,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	jwtSecret      string
 }
 
 type User struct {
@@ -69,6 +72,7 @@ type User struct {
 	Created_At time.Time `json:"created_at"`
 	Updated_At time.Time `json:"updated_at"`
 	Email      string    `json:"email"`
+	Token      string    `json:"token"`
 }
 
 type Chirp struct {
@@ -110,14 +114,23 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (apiCfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
+func (apiCfg *apiConfig) handlerPostChirps(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body string    `json:"body"`
-		User uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+	}
+
+	user, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, 500, err.Error())
 		return
@@ -130,10 +143,14 @@ func (apiCfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request
 
 	chirp := database.CreateChirpParams{
 		Body:   cleanChirp(params.Body),
-		UserID: params.User,
+		UserID: user,
 	}
 
 	createdChirp, err := apiCfg.db.CreateChirp(r.Context(), chirp)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
 
 	respondWithJSON(w, 201, Chirp{
 		ID:         createdChirp.ID,
@@ -233,6 +250,7 @@ func (apiCfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Requ
 	chirps, err := apiCfg.db.GetAllChrips(r.Context())
 	if err != nil {
 		respondWithError(w, 500, err.Error())
+		return
 	}
 
 	allChirps := []Chirp{}
@@ -274,8 +292,9 @@ func (apiCfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request)
 
 func (apiCfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
@@ -296,12 +315,25 @@ func (apiCfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
 	}
+	expires := time.Duration(time.Second * 0)
+	if params.ExpiresInSeconds >= 3600 || params.ExpiresInSeconds == 0 {
+		expires = time.Duration(time.Second * 3600)
+	} else {
+		expires = time.Duration(time.Second * time.Duration(params.ExpiresInSeconds))
+	}
+	token, err := auth.MakeJWT(user.ID, apiCfg.jwtSecret, expires)
+
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
 
 	returnUser := User{
 		ID:         user.ID,
 		Created_At: user.CreatedAt,
 		Updated_At: user.UpdatedAt,
 		Email:      user.Email,
+		Token:      token,
 	}
 
 	respondWithJSON(w, 200, returnUser)

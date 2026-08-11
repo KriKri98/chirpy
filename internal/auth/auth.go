@@ -3,6 +3,8 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -59,4 +61,18 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("invalid user ID: %w", err)
 	}
 	return user, nil
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	auth := headers.Get("Authorization")
+	if len(auth) == 0 {
+		return "", fmt.Errorf("no Authorization in header")
+	}
+
+	auth, valid := strings.CutPrefix(auth, "Bearer ")
+	if !valid {
+		return "", fmt.Errorf("Could not strip prefix")
+	}
+
+	return auth, nil
 }
