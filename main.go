@@ -48,6 +48,8 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirpByID)
 	s := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -130,7 +132,7 @@ func (apiCfg *apiConfig) handlerPostChirps(w http.ResponseWriter, r *http.Reques
 	}
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, 500, err.Error())
+		respondWithError(w, 401, err.Error())
 	}
 
 	user, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
@@ -350,7 +352,7 @@ func (apiCfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 func (apiCfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, 500, err.Error())
+		respondWithError(w, 401, err.Error())
 		return
 	}
 
@@ -381,7 +383,7 @@ func (apiCfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) 
 func (apiCfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, 500, err.Error())
+		respondWithError(w, 401, err.Error())
 		return
 	}
 
@@ -390,6 +392,92 @@ func (apiCfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, err.Error())
 		return
 	}
+	respondWithJSON(w, 204, "")
+
+}
+
+func (apiCfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) {
+	acessToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	userID, err := auth.ValidateJWT(acessToken, apiCfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	userToUpdate := database.UpdateUserByIDParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+		ID:             userID,
+	}
+
+	user, err := apiCfg.db.UpdateUserByID(r.Context(), userToUpdate)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	respondWithJSON(w, 200, User{ID: user.ID, Email: user.Email, Created_At: user.CreatedAt, Updated_At: user.UpdatedAt})
+}
+
+func (apiCfg *apiConfig) handlerDeleteChirpByID(w http.ResponseWriter, r *http.Request) {
+	chirpUUID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	acessToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	userID, err := auth.ValidateJWT(acessToken, apiCfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	chirp, err := apiCfg.db.GetChrip(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, 404, err.Error())
+		return
+	}
+
+	if chirp.UserID != userID {
+		respondWithError(w, 403, "user not the author of chirp")
+		return
+	}
+
+	err = apiCfg.db.DeleteChirpByID(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
 	respondWithJSON(w, 204, "")
 
 }
