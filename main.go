@@ -50,6 +50,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
 	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirpByID)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerUpgradeUser)
 	s := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -78,6 +79,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -241,10 +243,11 @@ func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	resp := User{
-		ID:         user.ID,
-		Created_At: user.CreatedAt,
-		Updated_At: user.UpdatedAt,
-		Email:      user.Email,
+		ID:          user.ID,
+		Created_At:  user.CreatedAt,
+		Updated_At:  user.UpdatedAt,
+		Email:       user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 
 	respondWithJSON(w, 201, resp)
@@ -343,6 +346,7 @@ func (apiCfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		Email:        user.Email,
 		Token:        token,
 		RefreshToken: refreshTokenStored.Token,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 
 	respondWithJSON(w, 200, returnUser)
@@ -439,7 +443,7 @@ func (apiCfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	respondWithJSON(w, 200, User{ID: user.ID, Email: user.Email, Created_At: user.CreatedAt, Updated_At: user.UpdatedAt})
+	respondWithJSON(w, 200, User{ID: user.ID, Email: user.Email, Created_At: user.CreatedAt, Updated_At: user.UpdatedAt, IsChirpyRed: user.IsChirpyRed})
 }
 
 func (apiCfg *apiConfig) handlerDeleteChirpByID(w http.ResponseWriter, r *http.Request) {
@@ -480,4 +484,33 @@ func (apiCfg *apiConfig) handlerDeleteChirpByID(w http.ResponseWriter, r *http.R
 
 	respondWithJSON(w, 204, "")
 
+}
+
+func (apiCfg *apiConfig) handlerUpgradeUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	if params.Event != "user.upgraded" {
+		respondWithJSON(w, 204, "")
+		return
+	}
+
+	err = apiCfg.db.UpgradeUserRed(r.Context(), params.Data.UserID)
+	if err != nil {
+		respondWithError(w, 404, err.Error())
+		return
+	}
+
+	respondWithJSON(w, 204, "")
 }
