@@ -84,3 +84,17 @@ func MakeRefreshToken() string {
 	rand.Read(randBytes)
 	return hex.EncodeToString(randBytes)
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	apiKey := headers.Get("Authorization")
+	if len(apiKey) == 0 {
+		return "", fmt.Errorf("no Authorization in header")
+	}
+
+	apiKey, valid := strings.CutPrefix(apiKey, "ApiKey ")
+	if !valid {
+		return "", fmt.Errorf("Could not strip prefix")
+	}
+
+	return apiKey, nil
+}

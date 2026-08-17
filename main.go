@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Print(err)
@@ -35,6 +37,7 @@ func main() {
 		db:             dbQueries,
 		platform:       platform,
 		jwtSecret:      jwtSecret,
+		polkaKey:       polkaKey,
 	}
 	apiCfg.fileserverHits.Store(0)
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
@@ -70,6 +73,7 @@ type apiConfig struct {
 	db             *database.Queries
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
 
 type User struct {
@@ -255,10 +259,28 @@ func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Reques
 }
 
 func (apiCfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := apiCfg.db.GetAllChrips(r.Context())
-	if err != nil {
-		respondWithError(w, 500, err.Error())
-		return
+	sortType := r.URL.Query().Get("sort")
+	author_id := r.URL.Query().Get("author_id")
+	err := error(nil)
+
+	chirps := []database.Chirp{}
+	if len(author_id) > 0 {
+		id, err := uuid.Parse(author_id)
+		if err != nil {
+			respondWithError(w, 500, err.Error())
+			return
+		}
+		chirps, err = apiCfg.db.GetAllChripsFromAuthor(r.Context(), id)
+		if err != nil {
+			respondWithError(w, 500, err.Error())
+			return
+		}
+	} else {
+		chirps, err = apiCfg.db.GetAllChrips(r.Context())
+		if err != nil {
+			respondWithError(w, 500, err.Error())
+			return
+		}
 	}
 
 	allChirps := []Chirp{}
@@ -270,6 +292,9 @@ func (apiCfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Requ
 			Body:       chirp.Body,
 			User_ID:    chirp.UserID,
 		})
+	}
+	if sortType == "desc" {
+		sort.Slice(allChirps, func(i, j int) bool { return allChirps[i].Created_At.After(allChirps[j].Created_At) })
 	}
 
 	respondWithJSON(w, 200, allChirps)
@@ -487,6 +512,17 @@ func (apiCfg *apiConfig) handlerDeleteChirpByID(w http.ResponseWriter, r *http.R
 }
 
 func (apiCfg *apiConfig) handlerUpgradeUser(w http.ResponseWriter, r *http.Request) {
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	if apiKey != apiCfg.polkaKey {
+		respondWithError(w, 401, "Not Authorized")
+		return
+	}
 	type parameters struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -495,7 +531,7 @@ func (apiCfg *apiConfig) handlerUpgradeUser(w http.ResponseWriter, r *http.Reque
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 500, err.Error())
 		return
